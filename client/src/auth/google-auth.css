@@ -1,0 +1,8 @@
+.auth-form-divider{display:flex;align-items:center;gap:12px;margin:17px 0;color:#87958e;font-size:12px}
+.auth-form-divider::before,.auth-form-divider::after{content:"";height:1px;flex:1;background:#e5ebe8}
+.google-auth-button{width:100%;min-height:46px;display:flex;align-items:center;justify-content:center;gap:10px;border:1px solid #d5ddd9;border-radius:8px;background:#fff;color:#24342d;font-weight:650;font-size:14px;transition:background .15s,border-color .15s}
+.google-auth-button:hover{background:#f8faf9;border-color:#aab8b0}
+.oauth-result{min-height:100vh;display:grid;place-items:center;padding:24px;background:#f4f7f5}
+.oauth-result section{width:min(440px,100%);padding:30px;background:#fff;border:1px solid #e5ebe8;border-radius:12px;text-align:center}
+.oauth-result h1{margin-top:0}.oauth-result p{line-height:1.6;color:#52635a}.oauth-result section>div{display:flex;justify-content:center;gap:10px;margin-top:22px}
+@media(max-width:420px){.oauth-result section>div{flex-direction:column}.oauth-result .btn{width:100%}}
