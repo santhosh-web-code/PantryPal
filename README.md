@@ -50,8 +50,8 @@ connection.
    ```
 
 The frontend is at `http://localhost:5173`; the API is at
-`http://localhost:5000`. `GET /api/health` reports API readiness. Stop either
-process with `Ctrl+C`.
+`http://localhost:5000`. `GET /` identifies the API, while `/health` and
+`/api/health` report database health. Stop either process with `Ctrl+C`.
 
 ## Portals and pantry access
 

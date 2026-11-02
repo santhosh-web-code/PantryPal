@@ -36,6 +36,26 @@ after(async () => {
   else process.env.JWT_SECRET = previousSecret;
 });
 
+test('root and health endpoints report the running API and connected database', async () => {
+  const root = await request(app)
+    .get('/')
+    .expect(200);
+  assert.deepEqual(root.body, {
+    success: true,
+    message: 'PantryPal API is running'
+  });
+
+  for (const path of ['/health', '/api/health']) {
+    const response = await request(app)
+      .get(path)
+      .expect(200);
+    assert.deepEqual(response.body, {
+      status: 'ok',
+      database: 'connected'
+    });
+  }
+});
+
 async function register(client, name, email, portal) {
   const response = await client.post('/api/auth/register').send({
     name,

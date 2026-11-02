@@ -13,7 +13,9 @@ Copy-Item .env.example .env
 npm run dev
 ```
 
-`npm start` runs the same API without file watching. The process connects to MongoDB before listening. `GET /api/health` returns `{"status":"ok"}` after startup. The checked-in `.env.example` contains placeholders only. Configure `CLIENT_URL`, `JWT_SECRET`, and Google OAuth values before enabling Google sign-in.
+`npm start` runs the same API without file watching. The process connects to MongoDB before listening and exits with an error if `MONGO_URI` is missing or the database connection fails. `GET /` returns a simple API-running message. `GET /health` and the backwards-compatible `GET /api/health` return the database connection state and use HTTP 503 when MongoDB is disconnected.
+
+Set `MONGO_URI` and a strong `JWT_SECRET` in the server environment. Set `CLIENT_URL` to the frontend origin in production so credentialed CORS requests are allowed. Render supplies `PORT`; locally the server defaults to port 5000. Google sign-in is optional and requires `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_CALLBACK_URL`.
 
 Run the backend tests with `npm test`; tests use `mongodb-memory-server`, not a production database.
 
