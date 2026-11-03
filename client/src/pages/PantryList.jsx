@@ -12,6 +12,7 @@ export default function PantryList() {
   const [resolvingRequest, setResolvingRequest] = useState('');
   const [loading, setLoading] = useState(true);
   const [joiningPantryId, setJoiningPantryId] = useState('');
+  const [deletingPantryId, setDeletingPantryId] = useState('');
   const [modal, setModal] = useState(false);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -178,6 +179,7 @@ export default function PantryList() {
   };
 
   const deletePantry = async pantry => {
+    setError('');
     const memberCount = pantry.memberIds.filter(id => id !== pantry.ownerId).length;
     if (memberCount) {
       await openManagement(pantry);
@@ -185,12 +187,15 @@ export default function PantryList() {
       return;
     }
     if (!window.confirm(`Delete "${pantry.name}" and its inventory and activity history? This cannot be undone.`)) return;
+    setDeletingPantryId(pantry.id);
     try {
       await apiRequest(`/api/pantries/${pantry.id}`, { method: 'DELETE' });
       setNotice('Pantry deleted.');
       await loadPantries();
     } catch (requestError) {
       setError(requestError.message);
+    } finally {
+      setDeletingPantryId('');
     }
   };
 
@@ -211,7 +216,7 @@ export default function PantryList() {
             {pantry.description && <p>{pantry.description}</p>}
             <div className="pantry-meta"><span><Users size={17}/><strong>{memberCount}</strong> members</span></div>
             <Link to={isOwner ? `/inventory?pantryId=${pantry.id}` : `/buyer/shop?pantryId=${pantry.id}`} className="pantry-open">Open pantry <ArrowUpRight size={16}/></Link>
-            {isOwner && <div className="modal-actions"><button type="button" className="btn secondary" onClick={() => openManagement(pantry)}>Manage members</button><button type="button" className="icon-button danger" onClick={() => deletePantry(pantry)} aria-label={`Delete ${pantry.name}`}><Trash2 size={17}/></button></div>}
+            {isOwner && <div className="modal-actions"><button type="button" className="btn secondary" onClick={() => openManagement(pantry)}>Manage members</button><button type="button" className="btn secondary pantry-delete-button" disabled={deletingPantryId === pantry.id} onClick={() => deletePantry(pantry)}><Trash2 size={17}/>{deletingPantryId === pantry.id ? 'Deleting…' : 'Delete pantry'}</button></div>}
             {isOwner && (requestsByPantry[pantry.id] || []).length > 0 && <section className="pantry-join-requests" aria-label={`Join requests for ${pantry.name}`}>
               <h3>Join requests <span>{requestsByPantry[pantry.id].length}</span></h3>
               {requestsByPantry[pantry.id].map(member => {

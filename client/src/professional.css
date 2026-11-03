@@ -295,6 +295,7 @@ body { background: linear-gradient(135deg, #f1f6f3 0%, #f8faf9 48%, #edf4f0 100%
 .app-shell .btn.secondary { border-color: var(--line); color: var(--ink); background: var(--surface); }
 .app-shell .icon-button { border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
 .app-shell .icon-button.danger { color: #d94a4a; }
+.app-shell .btn.pantry-delete-button { color: #b64242; border-color: #efcaca; }
 .members-grid { gap: 18px; }
 .members-grid .member-card { min-height: 118px; border: 1px solid rgba(67, 132, 102, .16); border-radius: 18px; padding: 22px; }
 .member-card-clickable { background: linear-gradient(145deg, var(--surface), rgba(232, 245, 239, .45)); }
