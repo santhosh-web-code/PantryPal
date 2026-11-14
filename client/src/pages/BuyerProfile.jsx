@@ -15,7 +15,7 @@ export default function BuyerProfile() {
       <section className="panel profile-panel buyer-profile-panel">
         <div className="profile-banner buyer-profile-banner">
           <div className="buyer-profile-photo">
-            <span>{initials}</span>
+            {user.profileImage ? <img src={user.profileImage} alt="" /> : <span>{initials}</span>}
           </div>
         </div>
         <div className="profile-details buyer-profile-details">

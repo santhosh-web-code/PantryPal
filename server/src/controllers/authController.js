@@ -1,6 +1,7 @@
 import bcrypt from 'bcryptjs';
 import User from '../models/User.js';
 import Pantry from '../models/Pantry.js';
+import InventoryActivity from '../models/InventoryActivity.js';
 import { HttpError } from '../middleware/errors.js';
 import { normalizePortal, signUser } from '../middleware/auth.js';
 import { AUTH_COOKIE_NAME, authCookieOptions } from '../utils/authCookie.js';
@@ -51,7 +52,15 @@ export async function register(req, res) {
     if (error?.code === 11000) throw existingEmailError();
     throw error;
   }
-  if (portal === 'owner') await Pantry.create({ name: `${user.name}'s Pantry`, ownerId: user._id, memberIds: [] });
+  if (portal === 'owner') {
+    const pantry = await Pantry.create({ name: `${user.name}'s Pantry`, ownerId: user._id, memberIds: [] });
+    await InventoryActivity.create({
+      pantryId: pantry._id,
+      userId: user._id,
+      action: 'pantry_created',
+      description: `Created pantry ${pantry.name}`
+    });
+  }
   res.cookie(AUTH_COOKIE_NAME, signUser(user, portal), authCookieOptions());
   res.status(201).json({ user: user.toJSON(), portal });
 }
@@ -72,6 +81,69 @@ export async function login(req, res) {
 
 export function currentUser(req, res) {
   res.json({ user: req.user.toJSON(), portal: req.activePortal });
+}
+
+export async function updateProfile(req, res) {
+  const updates = {};
+  const body = req.body || {};
+  const unsupported = Object.keys(body).find(key => !['name', 'email', 'profileImage'].includes(key));
+  if (unsupported) throw new HttpError(400, `Unsupported profile field: ${unsupported}`, 'UNSUPPORTED_FIELD');
+  if (Object.hasOwn(body, 'name')) {
+    if (typeof body.name !== 'string' || body.name.trim().length < 2 || body.name.trim().length > 80) {
+      throw new HttpError(400, 'name must contain 2 to 80 characters', 'INVALID_FIELD');
+    }
+    updates.name = body.name.trim();
+  }
+  if (Object.hasOwn(body, 'email')) {
+    if (typeof body.email !== 'string' || !emailPattern.test(body.email.trim())) {
+      throw new HttpError(400, 'A valid email is required', 'INVALID_FIELD');
+    }
+    updates.email = body.email.trim().toLowerCase();
+  }
+  if (Object.hasOwn(body, 'profileImage')) {
+    if (typeof body.profileImage !== 'string' || body.profileImage.length > 2048) {
+      throw new HttpError(400, 'profileImage must be a URL no longer than 2048 characters', 'INVALID_FIELD');
+    }
+    if (body.profileImage) {
+      let imageUrl;
+      try {
+        imageUrl = new URL(body.profileImage.trim());
+      } catch {
+        throw new HttpError(400, 'profileImage must be a valid HTTP or HTTPS URL', 'INVALID_FIELD');
+      }
+      if (!['http:', 'https:'].includes(imageUrl.protocol)) {
+        throw new HttpError(400, 'profileImage must be a valid HTTP or HTTPS URL', 'INVALID_FIELD');
+      }
+    }
+    updates.profileImage = body.profileImage.trim();
+  }
+  if (!Object.keys(updates).length) throw new HttpError(400, 'Provide profile details to update', 'EMPTY_UPDATE');
+  try {
+    const user = await User.findByIdAndUpdate(req.user._id, { $set: updates }, { new: true, runValidators: true });
+    if (!user) throw new HttpError(401, 'User account is unavailable', 'UNAUTHENTICATED');
+    res.json({ user: user.toJSON() });
+  } catch (error) {
+    if (error?.code === 11000) throw new HttpError(409, 'An account with that email already exists', 'EMAIL_IN_USE');
+    throw error;
+  }
+}
+
+export async function changePassword(req, res) {
+  const unsupported = Object.keys(req.body || {}).find(key => !['currentPassword', 'newPassword'].includes(key));
+  if (unsupported) throw new HttpError(400, `Unsupported password field: ${unsupported}`, 'UNSUPPORTED_FIELD');
+  const { currentPassword, newPassword } = req.body || {};
+  if (typeof currentPassword !== 'string' || typeof newPassword !== 'string') {
+    throw new HttpError(400, 'Current and new passwords are required', 'INVALID_FIELD');
+  }
+  if (newPassword.length < 6) throw new HttpError(400, 'New password must contain at least 6 characters', 'INVALID_FIELD');
+  const user = await User.findById(req.user._id).select('+passwordHash');
+  if (!user?.passwordHash) throw new HttpError(409, 'This account does not have a password. Sign in with its linked provider.', 'PASSWORD_NOT_CONFIGURED');
+  if (!await bcrypt.compare(currentPassword, user.passwordHash)) {
+    throw new HttpError(401, 'Current password is incorrect', 'INVALID_CREDENTIALS');
+  }
+  user.passwordHash = await bcrypt.hash(newPassword, 12);
+  await user.save();
+  res.json({ message: 'Password updated successfully' });
 }
 
 export function logout(_req, res) {

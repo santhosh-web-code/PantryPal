@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { currentUser, login, logout, register } from '../controllers/authController.js';
+import { changePassword, currentUser, login, logout, register, updateProfile } from '../controllers/authController.js';
 import { createGoogleAuthHandlers } from '../controllers/googleAuthController.js';
 import { authenticate } from '../middleware/auth.js';
 import { createGoogleOAuthService } from '../services/googleOAuth.js';
@@ -11,6 +11,8 @@ export function createAuthRouter({ googleOAuth = createGoogleOAuthService() } = 
   router.post('/register', wrap(register));
   router.post('/login', wrap(login));
   router.get('/me', authenticate, wrap(currentUser));
+  router.patch('/profile', authenticate, wrap(updateProfile));
+  router.patch('/password', authenticate, wrap(changePassword));
   router.post('/logout', logout);
   router.get('/google', wrap(googleHandlers.portal));
   router.get('/google/callback', wrap(googleHandlers.callback));

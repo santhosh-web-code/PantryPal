@@ -231,10 +231,16 @@ test('inventory authorization follows actual pantry relationships and active por
   assert.equal(updatedItem.quantity, 6);
   assert.equal(updatedItem.name, 'Rice');
   await ownerClient.patch(`/api/items/${item.id}`).send({ name: 'Brown rice' }).expect(200);
+  const ownerActivity = await ownerClient.get(`/api/pantries/${pantry.id}/activity`).expect(200);
+  assert.ok(ownerActivity.body.activities.some(entry => entry.action === 'quantity_changed' && entry.userId.name === 'Member Example'));
+  assert.ok(ownerActivity.body.activities.some(entry => entry.action === 'pantry_created'));
+  const memberActivity = await memberClient.get(`/api/pantries/${pantry.id}/activity`).expect(200);
+  assert.equal(memberActivity.body.activities.length, ownerActivity.body.activities.length);
 
   const ownerAsMember = request.agent(app);
   await ownerAsMember.post('/api/auth/login').send({ email: owner.email, password: 'secure-password', portal: 'member' }).expect(200);
   await ownerAsMember.get(`/api/pantries/${pantry.id}/items`).expect(403);
+  await ownerAsMember.get(`/api/pantries/${pantry.id}/activity`).expect(403);
 });
 
 test('ownership transfer keeps pantry data and changes portal relationships atomically', async () => {

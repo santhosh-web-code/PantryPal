@@ -5,6 +5,7 @@ import request from 'supertest';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import { createApp } from '../src/app.js';
 import PantryItem from '../src/models/PantryItem.js';
+import InventoryActivity from '../src/models/InventoryActivity.js';
 
 let mongo;
 let app;
@@ -21,10 +22,15 @@ before(async () => {
   await mongoose.connect(mongo.getUri());
   app = createApp({ authenticate: auth, authorizePantryAccess: authorize, recordStockAdjustment: async record => activities.push(record) });
 });
-beforeEach(async () => { await PantryItem.deleteMany({}); deniedPantry.clear(); activities.length = 0; });
+beforeEach(async () => { await PantryItem.deleteMany({}); await InventoryActivity.deleteMany({}); deniedPantry.clear(); activities.length = 0; });
 after(async () => { await mongoose.disconnect(); await mongo.stop(); });
 
-const newItem = (overrides = {}) => ({ name: 'Basmati Rice', category: 'Grains', quantity: 5, unit: 'kg', expiryDate: '2027-05-01', lowStockThreshold: 2, ...overrides });
+const dateOffset = days => {
+  const date = new Date();
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+};
+const newItem = (overrides = {}) => ({ name: 'Basmati Rice', category: 'Grains', quantity: 5, unit: 'kg', expiryDate: dateOffset(30), lowStockThreshold: 2, ...overrides });
 async function create(pantryId = pantry1, body = newItem()) {
   return request(app).post(`/api/pantries/${pantryId}/items`).send(body);
 }
@@ -33,7 +39,7 @@ test('create and list only pantry items, including search and category filters',
   const created = await create();
   assert.equal(created.status, 201);
   assert.equal(created.body.item.isLowStock, false);
-  assert.equal(created.body.item.expiryDate, '2027-05-01');
+  assert.equal(created.body.item.expiryDate, dateOffset(30));
   await create(pantry2, newItem({ name: 'Basmati Rice Cakes', category: 'Snacks' }));
   await create(pantry1, newItem({ name: 'Milk', category: 'Dairy' }));
   const all = await request(app).get(`/api/pantries/${pantry1}/items`);
@@ -48,9 +54,12 @@ test('validates required fields, numbers, dates, and pantry IDs', async () => {
   assert.equal((await create(pantry1, newItem({ name: '  ' }))).status, 400);
   assert.equal((await create(pantry1, newItem({ quantity: -1 }))).status, 400);
   assert.equal((await create(pantry1, newItem({ quantity: '5' }))).status, 400);
+  assert.equal((await create(pantry1, newItem({ quantity: 0 }))).status, 400);
   assert.equal((await create(pantry1, newItem({ lowStockThreshold: -1 }))).status, 400);
   assert.equal((await create(pantry1, newItem({ unit: ' ' }))).status, 400);
+  assert.equal((await create(pantry1, newItem({ unit: 'cups' }))).status, 400);
   assert.equal((await create(pantry1, newItem({ expiryDate: '2027-02-30' }))).status, 400);
+  assert.equal((await create(pantry1, newItem({ expiryDate: dateOffset(-1) }))).status, 400);
   assert.equal((await create('bad-id')).status, 400);
 });
 
@@ -67,6 +76,8 @@ test('updates item details and applies stock changes atomically down to zero', a
   assert.equal(activities.length, 2);
   assert.equal(activities[1].changeAmount, -9);
   assert.equal(activities[1].pantryId, pantry1);
+  const records = await InventoryActivity.find({ pantryId: pantry1 }).sort({ createdAt: 1 });
+  assert.deepEqual(records.map(record => record.action), ['item_added', 'item_updated', 'quantity_changed', 'quantity_changed']);
 });
 
 test('rejects invalid stock changes and absolute quantities without changing stock or activity', async () => {
@@ -106,6 +117,8 @@ test('competing decrements cannot overspend stock', async () => {
 test('deletes existing items and reports invalid or missing IDs', async () => {
   const { body } = await create();
   assert.equal((await request(app).delete(`/api/items/${body.item.id}`)).status, 200);
+  const removal = await InventoryActivity.findOne({ action: 'item_removed' });
+  assert.equal(removal.description, 'Removed Basmati Rice');
   assert.equal((await request(app).delete(`/api/items/${body.item.id}`)).status, 404);
   assert.equal((await request(app).delete('/api/items/not-an-id')).status, 400);
 });

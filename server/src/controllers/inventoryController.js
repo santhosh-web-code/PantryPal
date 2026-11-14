@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import PantryItem from '../models/PantryItem.js';
+import InventoryActivity from '../models/InventoryActivity.js';
 import { HttpError } from '../middleware/errors.js';
 import { requireObjectId } from '../middleware/inventoryDependencies.js';
 
@@ -12,14 +13,31 @@ const finiteNonNegative = (value, label) => {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) throw new HttpError(400, `${label} must be a finite non-negative number`, 'INVALID_FIELD');
   return value;
 };
-function normalizeExpiry(value) {
+const finitePositive = (value, label) => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) throw new HttpError(400, `${label} must be a finite positive number`, 'INVALID_FIELD');
+  return value;
+};
+const allowedUnits = new Set([
+  'kg', 'g', 'mg', 'L', 'mL', 'pcs', 'packets', 'boxes', 'bottles', 'dozens',
+  'litres', 'litre', 'liters', 'liter', 'ml', 'packs', 'pack', 'pieces', 'piece'
+]);
+function normalizeExpiry(value, timeZone = 'UTC') {
   if (value === '' || value === null) return null;
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new HttpError(400, 'expiryDate must use YYYY-MM-DD', 'INVALID_FIELD');
   const date = new Date(`${value}T00:00:00.000Z`);
   if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== value) throw new HttpError(400, 'expiryDate is not a valid calendar date', 'INVALID_FIELD');
+  let today;
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+    const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+    today = `${values.year}-${values.month}-${values.day}`;
+  } catch {
+    throw new HttpError(400, 'A valid time zone is required', 'INVALID_TIME_ZONE');
+  }
+  if (value < today) throw new HttpError(400, 'expiryDate cannot be in the past', 'PAST_DATE');
   return date;
 }
-function validateDetails(body, { creating = false } = {}) {
+function validateDetails(body, { creating = false, timeZone, existingUnit } = {}) {
   const update = {};
   if (creating || own(body, 'name')) {
     if (typeof body.name !== 'string' || !body.name.trim()) throw new HttpError(400, 'name is required and cannot be blank', 'INVALID_FIELD');
@@ -32,9 +50,10 @@ function validateDetails(body, { creating = false } = {}) {
   if (creating || own(body, 'unit')) {
     if (typeof body.unit !== 'string' || !body.unit.trim()) throw new HttpError(400, 'unit is required and cannot be blank', 'INVALID_FIELD');
     update.unit = body.unit.trim();
+    if (!allowedUnits.has(update.unit) && update.unit !== existingUnit) throw new HttpError(400, 'unit must be a supported measurement unit', 'INVALID_FIELD');
   }
   if (creating || own(body, 'lowStockThreshold')) update.lowStockThreshold = finiteNonNegative(body.lowStockThreshold, 'lowStockThreshold');
-  if (own(body, 'expiryDate')) update.expiryDate = normalizeExpiry(body.expiryDate);
+  if (own(body, 'expiryDate')) update.expiryDate = normalizeExpiry(body.expiryDate, timeZone);
   else if (creating) update.expiryDate = null;
   if (own(body, 'image')) {
     if (typeof body.image !== 'string') throw new HttpError(400, 'image must be a string', 'INVALID_FIELD');
@@ -43,6 +62,14 @@ function validateDetails(body, { creating = false } = {}) {
   return update;
 }
 const serialize = doc => doc.toJSON();
+async function saveActivity(req, activity) {
+  const record = {
+    ...activity,
+    pantryId: activity.pantryId || req.inventoryPantryId,
+    userId: req.user._id
+  };
+  await InventoryActivity.create(record);
+}
 
 export async function listItems(req, res) {
   const filter = { pantryId: req.params.pantryId };
@@ -58,9 +85,16 @@ export async function createItem(req, res) {
   const body = req.body || {};
   rejectUnknownFields(body, ['name', 'category', 'quantity', 'unit', 'expiryDate', 'lowStockThreshold', 'image']);
   if (!own(body, 'quantity')) throw new HttpError(400, 'quantity is required', 'INVALID_FIELD');
-  const fields = validateDetails(body, { creating: true });
-  fields.quantity = finiteNonNegative(body.quantity, 'quantity');
+  const fields = validateDetails(body, { creating: true, timeZone: req.get('x-time-zone') || 'UTC' });
+  fields.quantity = finitePositive(body.quantity, 'quantity');
   const item = await PantryItem.create({ ...fields, pantryId: req.params.pantryId, createdBy: req.user._id });
+  await saveActivity(req, {
+    pantryId: item.pantryId,
+    itemId: item._id,
+    action: 'item_added',
+    description: `Added ${item.name} (${item.quantity} ${item.unit})`,
+    changeAmount: item.quantity
+  });
   res.status(201).json({ item: serialize(item) });
 }
 
@@ -82,7 +116,10 @@ export async function updateItem(req, res) {
   const hasChange = own(body, 'changeAmount');
   const hasQuantity = own(body, 'quantity');
   if (hasChange && hasQuantity) throw new HttpError(400, 'Use changeAmount for stock adjustments; quantity cannot be combined with it', 'AMBIGUOUS_STOCK_UPDATE');
-  const fields = validateDetails(body);
+  const fields = validateDetails(body, {
+    timeZone: req.get('x-time-zone') || 'UTC',
+    existingUnit: req.inventoryItem.unit
+  });
   if (hasQuantity) throw new HttpError(400, 'Absolute quantity updates are not supported; send changeAmount', 'ABSOLUTE_QUANTITY_NOT_SUPPORTED');
   if (!hasChange && Object.keys(fields).length === 0) throw new HttpError(400, 'Provide at least one item detail to update', 'EMPTY_UPDATE');
 
@@ -99,20 +136,40 @@ export async function updateItem(req, res) {
       throw new HttpError(409, 'Stock adjustment would make quantity negative; stock was not changed', 'INSUFFICIENT_STOCK');
     }
     const hook = req.app.locals.recordStockAdjustment;
-    let activityRecorded = false;
     if (typeof hook === 'function') {
       await hook({ pantryId: item.pantryId.toString(), itemId: item.id, userId: req.user._id.toString(), changeAmount: amount, note: typeof body.note === 'string' ? body.note : undefined, timestamp: new Date() });
-      activityRecorded = true;
     }
+    await saveActivity(req, {
+      pantryId: item.pantryId,
+      itemId: item._id,
+      action: 'quantity_changed',
+      description: `${amount > 0 ? 'Added' : 'Used'} ${Math.abs(amount)} ${item.unit} ${amount > 0 ? 'of' : 'from'} ${item.name}`,
+      changeAmount: amount,
+      note: typeof body.note === 'string' ? body.note.trim() : undefined
+    });
+    const activityRecorded = true;
     return res.json({ item: serialize(item), activityRecorded });
   }
   item = await PantryItem.findByIdAndUpdate(req.params.id, { $set: fields }, { new: true, runValidators: true });
   if (!item) throw new HttpError(404, 'Inventory item not found', 'ITEM_NOT_FOUND');
+  await saveActivity(req, {
+    pantryId: item.pantryId,
+    itemId: item._id,
+    action: 'item_updated',
+    description: `Updated ${item.name}`
+  });
   res.json({ item: serialize(item) });
 }
 
 export async function deleteItem(req, res) {
+  const current = req.inventoryItem;
   const deleted = await PantryItem.findByIdAndDelete(req.params.id);
   if (!deleted) throw new HttpError(404, 'Inventory item not found', 'ITEM_NOT_FOUND');
+  await saveActivity(req, {
+    pantryId: current.pantryId,
+    itemId: current._id,
+    action: 'item_removed',
+    description: `Removed ${current.name}`
+  });
   res.json({ message: 'Inventory item deleted', id: deleted.id });
 }

@@ -33,6 +33,14 @@ returns `409 EMAIL_IN_USE` and does not create another user. `GET /api/auth/me`
 restores both the profile and active portal. `POST /api/auth/logout` clears the
 cookie.
 
+Authenticated users can edit only their own profile with
+`PATCH /api/auth/profile` using any subset of `name`, `email`, and `profileImage`.
+Names must be 2–80 characters, email addresses must be valid and unique, and
+profile images must be HTTP(S) URLs. Duplicate email addresses return
+`409 EMAIL_IN_USE`. `PATCH /api/auth/password` accepts
+`{ "currentPassword": "...", "newPassword": "..." }` and verifies the current
+password before storing a new hash.
+
 `GET /api/auth/google/owner` and `GET /api/auth/google/member` establish the
 selected portal; the legacy `/api/auth/google/buyer` route remains an alias.
 The portal is protected in the HttpOnly OAuth state cookie. The flow uses PKCE
@@ -70,7 +78,8 @@ or `JWT_SECRET` to the browser. See the repository
   the pantry ID, items, activity, and all other memberships. The former owner
   becomes a member.
 - `GET /api/pantries/:id/activity` is available only through a valid pantry
-  relationship in the current portal.
+  relationship in the current portal. Activity is returned newest-first and
+  includes real pantry, member, and inventory operations performed by the actor.
 
 Pantry ownership (`ownerId`) is distinct from membership (`memberIds`). Existing
 owner self-references in `memberIds` are ignored for member lists and member
@@ -80,8 +89,10 @@ Owners can create, edit, adjust, and delete inventory items in their pantries.
 Members can read items in their member pantries and make positive or negative
 non-zero `changeAmount` adjustments; negative adjustments record usage and are
 rejected if they would make stock negative. Members cannot create items, change
-item details, or delete items. Stock changes are recorded in
-`InventoryActivity` after a successful atomic update.
+item details, or delete items. Pantry creation/updates, membership changes,
+item creation/details updates, quantity adjustments, and removals are recorded
+in `InventoryActivity` and are readable only by users with an active pantry
+relationship.
 
 ### Existing database compatibility and backup
 
@@ -131,7 +142,15 @@ Returns `{ "items": [...] }`, scoped to the path pantry. `search` is a case-inse
 }
 ```
 
-`name`, `quantity`, `unit`, and `lowStockThreshold` are required. Quantity and threshold must be finite, non-negative JSON numbers. `expiryDate` is optional, and if supplied must be a real `YYYY-MM-DD` date (empty string clears it). The server takes `createdBy` from authenticated identity; clients cannot set it. Returns `201 { "item": ... }`.
+`name`, `quantity`, `unit`, and `lowStockThreshold` are required. Quantity must
+be a finite positive JSON number and threshold a finite non-negative number.
+Units are stored separately from quantity and new values must be one of `kg`,
+`g`, `mg`, `L`, `mL`, `pcs`, `packets`, `boxes`, `bottles`, or `dozens`. Legacy
+unit names remain accepted for existing records. `expiryDate` is optional and,
+if supplied, must be a valid `YYYY-MM-DD` date that is today or later in the
+client's `X-Time-Zone` (IANA timezone) or UTC when the header is absent. An empty
+string clears the date. The server takes `createdBy` from authenticated
+identity; clients cannot set it. Returns `201 { "item": ... }`.
 
 ### Edit details or adjust stock
 
@@ -143,7 +162,10 @@ Stock is adjusted only by a signed delta. The server computes `new quantity = cu
 { "changeAmount": -2, "note": "Used for dinner" }
 ```
 
-`changeAmount` must be a finite, non-zero JSON number. A result below zero returns `409 INSUFFICIENT_STOCK` without changing the item. Reaching zero is allowed and does not delete the item. Successful adjustment returns `{ "item": ..., "activityRecorded": false }` until the activity hook is connected. When configured, the response reports `activityRecorded: true` after it accepts the record.
+`changeAmount` must be a finite, non-zero JSON number. A result below zero
+returns `409 INSUFFICIENT_STOCK` without changing the item. Reaching zero is
+allowed and does not delete the item. A successful adjustment returns
+`{ "item": ..., "activityRecorded": true }` after recording the event.
 
 ### Delete
 

@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { categories } from '../data/mockData.js';
+import { categories, quantityUnits } from '../data/categories.js';
+import { getLocalDateString, isTodayOrFutureDate } from '../utils/date.js';
 
-const empty = { name: '', category: categories[0], quantity: '', unit: '', expiryDate: '', lowStockThreshold: '' };
+const empty = { name: '', category: categories[0], quantity: '', unit: quantityUnits[0].value, expiryDate: '', lowStockThreshold: '' };
 
 // Add-item form with frontend validation. Calls onAdd(newItem) when valid.
 export default function ItemForm({ onAdd }) {
@@ -13,10 +14,10 @@ export default function ItemForm({ onAdd }) {
   const validate = () => {
     const e = {};
     if (!form.name.trim()) e.name = 'Name is required';
-    if (!form.unit.trim()) e.unit = 'Unit is required';
-    if (form.quantity === '' || Number(form.quantity) < 0) e.quantity = 'Enter a quantity of 0 or more';
-    if (form.lowStockThreshold === '' || Number(form.lowStockThreshold) < 0) e.lowStockThreshold = 'Enter a threshold of 0 or more';
-    if (!form.expiryDate) e.expiryDate = 'Expiry date is required';
+    if (!form.unit) e.unit = 'Select a unit';
+    if (form.quantity === '' || !Number.isFinite(Number(form.quantity)) || Number(form.quantity) <= 0) e.quantity = 'Enter a quantity greater than 0';
+    if (form.lowStockThreshold === '' || !Number.isFinite(Number(form.lowStockThreshold)) || Number(form.lowStockThreshold) < 0) e.lowStockThreshold = 'Enter a threshold of 0 or more';
+    if (!form.expiryDate || !isTodayOrFutureDate(form.expiryDate)) e.expiryDate = 'Select today or a future expiry date';
     return e;
   };
 
@@ -28,7 +29,6 @@ export default function ItemForm({ onAdd }) {
     onAdd({
       ...form,
       name: form.name.trim(),
-      unit: form.unit.trim(),
       quantity: Number(form.quantity),
       lowStockThreshold: Number(form.lowStockThreshold),
     });
@@ -47,19 +47,21 @@ export default function ItemForm({ onAdd }) {
         </select>
       </label>
       <label>Quantity
-        <input name="quantity" type="number" min="0" value={form.quantity} onChange={update} />
+        <input name="quantity" type="number" min="0.01" step="any" value={form.quantity} onChange={update} required />
         {errors.quantity && <span className="error">{errors.quantity}</span>}
       </label>
       <label>Unit
-        <input name="unit" placeholder="kg, pcs, litres" value={form.unit} onChange={update} />
+        <select name="unit" value={form.unit} onChange={update}>
+          {quantityUnits.map(unit => <option key={unit.value} value={unit.value}>{unit.label}</option>)}
+        </select>
         {errors.unit && <span className="error">{errors.unit}</span>}
       </label>
       <label>Expiry date
-        <input name="expiryDate" type="date" value={form.expiryDate} onChange={update} />
+        <input name="expiryDate" type="date" min={getLocalDateString()} value={form.expiryDate} onChange={update} required />
         {errors.expiryDate && <span className="error">{errors.expiryDate}</span>}
       </label>
       <label>Low-stock threshold
-        <input name="lowStockThreshold" type="number" min="0" value={form.lowStockThreshold} onChange={update} />
+        <input name="lowStockThreshold" type="number" min="0" step="any" value={form.lowStockThreshold} onChange={update} required />
         {errors.lowStockThreshold && <span className="error">{errors.lowStockThreshold}</span>}
       </label>
       <button className="btn" type="submit">Add item</button>

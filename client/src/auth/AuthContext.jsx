@@ -65,6 +65,14 @@ export function AuthProvider({ children }) {
 
   const login = useCallback((credentials, selectedPortal) => authenticate('/api/auth/login', credentials, selectedPortal), [authenticate]);
   const register = useCallback((credentials, selectedPortal) => authenticate('/api/auth/register', credentials, selectedPortal), [authenticate]);
+  const updateProfile = useCallback(async updates => {
+    const payload = await apiRequest('/api/auth/profile', {
+      method: 'PATCH',
+      body: JSON.stringify(updates)
+    });
+    setUser(payload.user);
+    return payload.user;
+  }, []);
   const logout = useCallback(async () => {
     authOperation.current += 1;
     try {
@@ -77,7 +85,7 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
-  const value = useMemo(() => ({ user, portal, status, error, login, register, logout }), [user, portal, status, error, login, register, logout]);
+  const value = useMemo(() => ({ user, portal, status, error, login, register, logout, updateProfile }), [user, portal, status, error, login, register, logout, updateProfile]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 

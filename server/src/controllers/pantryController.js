@@ -88,6 +88,12 @@ export async function requestPantryMembership(req, res) {
     }
     throw new HttpError(409, 'A request to join this pantry is already pending', 'JOIN_REQUEST_PENDING');
   }
+  await InventoryActivity.create({
+    pantryId: pantry._id,
+    userId: userId(req),
+    action: 'join_requested',
+    description: 'Requested access to the pantry'
+  });
   res.status(201).json({ message: 'Join request sent to the pantry owner' });
 }
 
@@ -99,6 +105,12 @@ export async function createPantry(req, res) {
   }
   const description = req.body.description?.trim() || '';
   const pantry = await Pantry.create({ name, description, ownerId: userId(req), memberIds: [] });
+  await InventoryActivity.create({
+    pantryId: pantry._id,
+    userId: userId(req),
+    action: 'pantry_created',
+    description: `Created pantry ${pantry.name}`
+  });
   res.status(201).json({ pantry: pantry.toJSON() });
 }
 
@@ -119,6 +131,12 @@ export async function updatePantry(req, res) {
   if (!Object.keys(updates).length) throw new HttpError(400, 'Provide pantry details to update', 'EMPTY_UPDATE');
   const pantry = await Pantry.findByIdAndUpdate(pantryId(req), { $set: updates }, { new: true, runValidators: true });
   if (!pantry) throw new HttpError(404, 'Pantry not found', 'PANTRY_NOT_FOUND');
+  await InventoryActivity.create({
+    pantryId: pantry._id,
+    userId: userId(req),
+    action: 'pantry_updated',
+    description: `Updated pantry ${pantry.name}`
+  });
   res.json({ pantry: pantry.toJSON() });
 }
 
@@ -137,6 +155,12 @@ export async function addMember(req, res) {
     { new: true }
   );
   if (!updatedPantry) throw new HttpError(409, 'This user already has access to the pantry', 'MEMBER_EXISTS');
+  await InventoryActivity.create({
+    pantryId: updatedPantry._id,
+    userId: userId(req),
+    action: 'member_added',
+    description: `Added ${user.name} as a pantry member`
+  });
   res.status(201).json({ pantry: updatedPantry.toJSON(), member: user.toJSON() });
 }
 
@@ -178,6 +202,13 @@ export async function resolveJoinRequest(req, res) {
       { _id: pantry._id, ownerId: userId(req) },
       { $pull: { joinRequests: { userId: targetId } } }
     );
+    const member = await User.findById(targetId).select('name');
+    await InventoryActivity.create({
+      pantryId: pantry._id,
+      userId: userId(req),
+      action: 'join_rejected',
+      description: `Rejected the join request from ${member?.name || 'a user'}`
+    });
     return res.json({ message: 'Join request rejected', userId: rawUserId });
   }
 
@@ -221,6 +252,13 @@ export async function resolveJoinRequest(req, res) {
     }
     throw new HttpError(409, 'The join request is no longer pending', 'JOIN_REQUEST_CHANGED');
   }
+  const member = await User.findById(targetId).select('name');
+  await InventoryActivity.create({
+    pantryId: updatedPantry._id,
+    userId: userId(req),
+    action: 'join_approved',
+    description: `Approved ${member?.name || 'a user'} as a pantry member`
+  });
   res.json({ message: 'Join request approved', userId: rawUserId });
 }
 
@@ -236,6 +274,13 @@ export async function removeMember(req, res) {
     { new: true }
   );
   if (!pantry) throw new HttpError(404, 'Pantry member not found', 'MEMBER_NOT_FOUND');
+  const member = await User.findById(targetId).select('name');
+  await InventoryActivity.create({
+    pantryId: pantry._id,
+    userId: userId(req),
+    action: 'member_removed',
+    description: `Removed ${member?.name || 'a user'} from the pantry`
+  });
   res.json({ pantry: pantry.toJSON(), removedUserId: req.params.userId });
 }
 
@@ -280,6 +325,13 @@ export async function transferOwnership(req, res) {
   }];
   const pantry = await Pantry.findOneAndUpdate(filter, update, { new: true });
   if (!pantry) throw new HttpError(409, 'The selected user must be a current member of this pantry', 'NEW_OWNER_NOT_MEMBER');
+  const newOwner = await User.findById(newOwnerId).select('name');
+  await InventoryActivity.create({
+    pantryId: pantry._id,
+    userId: currentOwnerId,
+    action: 'ownership_transferred',
+    description: `Transferred pantry ownership to ${newOwner?.name || 'a member'}`
+  });
   res.json({ pantry: pantry.toJSON(), newOwnerId: idString(newOwnerId), previousOwnerId: idString(currentOwnerId) });
 }
 
@@ -318,6 +370,10 @@ export async function deletePantry(req, res) {
 }
 
 export async function listActivity(req, res) {
-  const activities = await InventoryActivity.find({ pantryId: pantryId(req) }).sort({ createdAt: -1 }).limit(200);
+  const activities = await InventoryActivity.find({ pantryId: pantryId(req) })
+    .sort({ createdAt: -1 })
+    .limit(200)
+    .populate('userId', 'name profileImage')
+    .populate('itemId', 'name');
   res.json({ activities });
 }
