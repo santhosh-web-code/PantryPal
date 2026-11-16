@@ -21,6 +21,42 @@ const formatQuantity = (quantity, unit) => {
  return [quantity, formattedUnit].filter(Boolean).join(' ');
 };
 const formatExpiryDate = expiryDate => expiryDate ? String(expiryDate).slice(0, 10) : 'Not set';
+const getDaysUntilExpiry = expiryDate => {
+  if (!expiryDate) return null;
+  const dateStr = String(expiryDate).slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const target = new Date(`${dateStr}T00:00:00`);
+  if (!Number.isFinite(target.getTime())) return null;
+  return Math.ceil((target - today) / 86400000);
+};
+
+const isItemLowStock = item => {
+  const qty = Number(item.quantity);
+  const threshold = Number(item.lowStockThreshold);
+  return Number.isFinite(qty) && Number.isFinite(threshold) && qty <= threshold;
+};
+
+const isItemExpiringSoon = item => {
+  const days = getDaysUntilExpiry(item.expiryDate);
+  return days !== null && days >= 0 && days <= 7;
+};
+
+const isItemExpired = item => {
+  const days = getDaysUntilExpiry(item.expiryDate);
+  return days !== null && days < 0;
+};
+
+const getStockStatus = item => {
+  if (Number(item.quantity) <= 0) {
+    return { text: 'Out of stock', className: 'negative', isOut: true, isLow: true };
+  }
+  if (isItemLowStock(item)) {
+    return { text: 'Low stock', className: 'status-low-stock', isOut: false, isLow: true };
+  }
+  return { text: 'In stock', className: 'in-stock', isOut: false, isLow: false };
+};
 const getCreatorName = createdBy => typeof createdBy === 'object' && createdBy !== null && typeof createdBy.name === 'string'
  ? createdBy.name.trim() || 'Not available'
  : 'Not available';
@@ -82,7 +118,9 @@ export default function BuyerShopping(){
  const filtered=useMemo(()=>products.filter(item=>{
    const matchesSearch=item.name.toLowerCase().includes(search.trim().toLowerCase());
    const matchesCategory=category==='All'||item.category===category;
-   const matchesStock=stock==='All'||(stock==='In stock'&&item.quantity>0)||(stock==='Out of stock'&&item.quantity<=0)||(stock==='Low stock'&&item.quantity<=item.lowStockThreshold);
+   const isLow=isItemLowStock(item);
+   const isExpiring=isItemExpiringSoon(item);
+   const matchesStock=stock==='All'||(stock==='In stock'&&item.quantity>0)||(stock==='Low stock'&&isLow&&item.quantity>0)||(stock==='Expiring soon'&&isExpiring)||(stock==='Out of stock'&&item.quantity<=0);
    return matchesSearch&&matchesCategory&&matchesStock;
  }),[products,search,category,stock]);
  const clearFilters=()=>{setSearch('');setCategory('All');setStock('All');};
@@ -117,9 +155,15 @@ export default function BuyerShopping(){
  {successMessage&&<div className="form-success" role="status">{successMessage}</div>}
  {pantriesLoading||inventoryLoading?<p className="empty-state" aria-busy="true">Loading pantry inventory…</p>:!selectedPantryId&&!apiError?<div className="empty-state"><PackageSearch size={28}/><h3>{pantries.length?'Select a pantry':'No shared pantries yet'}</h3><p>{pantries.length?'Choose a shared pantry to view its inventory.':'Ask an owner to add your account as a member.'}</p></div>:null}
  <div className="shop-toolbar"><label className="search-field"><Search size={18}/><input value={search} onChange={event=>setSearch(event.target.value)} placeholder="Search pantry items..."/></label><button className={`btn secondary filter-toggle ${filtersOpen?'active':''}`} type="button" onClick={()=>setFiltersOpen(open=>!open)}><Filter size={17}/> Filter{(category!== 'All'||stock!=='All')&&<span className="filter-count">{[category!=='All',stock!=='All'].filter(Boolean).length}</span>}</button></div>
- {filtersOpen&&<div className="shop-filter-panel"><label>Category<select value={category} onChange={event=>setCategory(event.target.value)}>{categories.map(value=><option key={value}>{value}</option>)}</select></label><label>Availability<select value={stock} onChange={event=>setStock(event.target.value)}><option>All</option><option>In stock</option><option>Low stock</option><option>Out of stock</option></select></label><button className="icon-button filter-close" type="button" aria-label="Clear filters" onClick={clearFilters}><X size={18}/></button></div>}
+ {filtersOpen&&<div className="shop-filter-panel"><label>Category<select value={category} onChange={event=>setCategory(event.target.value)}>{categories.map(value=><option key={value}>{value}</option>)}</select></label><label>Availability<select value={stock} onChange={event=>setStock(event.target.value)}><option>All</option><option>In stock</option><option>Low stock</option><option>Expiring soon</option><option>Out of stock</option></select></label><button className="icon-button filter-close" type="button" aria-label="Clear filters" onClick={clearFilters}><X size={18}/></button></div>}
  <div className="shop-results-count">Showing {filtered.length} of {products.length} items{(search||category!== 'All'||stock!== 'All')&&<button type="button" onClick={clearFilters}>Clear filters</button>}</div>
- {!pantriesLoading&&!inventoryLoading&&selectedPantryId&&<div className="product-grid">{filtered.map(item=><article className="product-card" key={item.id}><div className="product-image-wrap"><ProductArtwork item={item} /></div><span className="product-category">{item.category}</span><h2>{item.name}</h2><p>{formatQuantity(item.quantity, item.unit)} available · <strong className={item.quantity<=0?'negative':'in-stock'}>{item.quantity<=0?'Out of stock':'In stock'}</strong></p><div className="product-details"><p><strong>Expiry date:</strong> {formatExpiryDate(item.expiryDate)}</p><p><strong>Low stock threshold:</strong> {formatQuantity(item.lowStockThreshold, item.unit)}</p><p><strong>Created by:</strong> {getCreatorName(item.createdBy)}</p></div><div className="product-bottom"><div style={{ alignItems: 'center', display: 'flex', flexWrap: 'wrap', gap: 8, width: '100%' }}><label style={{ alignItems: 'center', display: 'flex', gap: 8 }}>Quantity<input aria-label={`Quantity to adjust for ${item.name}`} className="member-quantity-input" type="number" min="0.01" step="any" value={quantities[item.id] ?? 1} onChange={event=>setQuantities(previous=>({...previous,[item.id]:event.target.value}))}/></label><button className="btn secondary" style={{ alignItems: 'center', display: 'inline-flex', gap: 6, whiteSpace: 'nowrap' }} type="button" disabled={updatingItemId===item.id} onClick={()=>adjustQuantity(item, 'add')}><Plus size={17}/>{updatingItemId===item.id?'Updating...':'Add quantity'}</button><button className="btn secondary" style={{ alignItems: 'center', display: 'inline-flex', gap: 6, whiteSpace: 'nowrap' }} type="button" disabled={updatingItemId===item.id||item.quantity<=0} onClick={()=>adjustQuantity(item, 'use')}>Use quantity</button></div></div></article>)}</div>}
+ {!pantriesLoading&&!inventoryLoading&&selectedPantryId&&<div className="product-grid">{filtered.map(item=>{
+  const stockStatus = getStockStatus(item);
+  const isLow = isItemLowStock(item);
+  const isExpiring = isItemExpiringSoon(item);
+  const isExpired = isItemExpired(item);
+  return <article className="product-card" key={item.id}><div className="product-image-wrap"><ProductArtwork item={item} /></div><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 4 }}><span className="product-category">{item.category}</span><div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>{isLow && !stockStatus.isOut && <span className="status low-stock">Low stock</span>}{isExpiring && <span className="status expiring-soon">Expiring soon</span>}{isExpired && <span className="status expired">Expired</span>}</div></div><h2>{item.name}</h2><p style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}><span>{formatQuantity(item.quantity, item.unit)} available · <strong className={stockStatus.className}>{stockStatus.text}</strong></span></p><div className="product-details"><p><strong>Expiry date:</strong> {formatExpiryDate(item.expiryDate)}{isExpiring && <span className="status expiring-soon" style={{ marginLeft: 6, padding: '2px 7px', fontSize: 10 }}>Expiring soon</span>}{isExpired && <span className="status expired" style={{ marginLeft: 6, padding: '2px 7px', fontSize: 10 }}>Expired</span>}</p><p><strong>Low stock threshold:</strong> {formatQuantity(item.lowStockThreshold, item.unit)}{isLow && !stockStatus.isOut && <span className="status low-stock" style={{ marginLeft: 6, padding: '2px 7px', fontSize: 10 }}>Low stock</span>}</p><p><strong>Created by:</strong> {getCreatorName(item.createdBy)}</p></div><div className="product-bottom"><div style={{ alignItems: 'center', display: 'flex', flexWrap: 'wrap', gap: 8, width: '100%' }}><label style={{ alignItems: 'center', display: 'flex', gap: 8 }}>Quantity<input aria-label={`Quantity to adjust for ${item.name}`} className="member-quantity-input" type="number" min="0.01" step="any" value={quantities[item.id] ?? 1} onChange={event=>setQuantities(previous=>({...previous,[item.id]:event.target.value}))}/></label><button className="btn secondary" style={{ alignItems: 'center', display: 'inline-flex', gap: 6, whiteSpace: 'nowrap' }} type="button" disabled={updatingItemId===item.id} onClick={()=>adjustQuantity(item, 'add')}><Plus size={17}/>{updatingItemId===item.id?'Updating...':'Add quantity'}</button><button className="btn secondary" style={{ alignItems: 'center', display: 'inline-flex', gap: 6, whiteSpace: 'nowrap' }} type="button" disabled={updatingItemId===item.id||item.quantity<=0} onClick={()=>adjustQuantity(item, 'use')}>Use quantity</button></div></div></article>;
+ })}</div>}
  {!pantriesLoading&&!inventoryLoading&&!apiError&&selectedPantryId&&!filtered.length&&<div className="empty-state"><PackageSearch size={28}/><h3>{products.length?'No items match these filters':'No items in this pantry yet'}</h3><p>{products.length?'Change the category, availability, or search text.':'The pantry owner has not added any inventory yet.'}</p>{products.length>0&&<button className="btn secondary" onClick={clearFilters}>Clear filters</button>}</div>}
  </div>;
 }
